@@ -39,13 +39,13 @@ def solve_milp(
     result = {
         "status": status_map.get(model.Status, f"STATUS_{model.Status}"),
         "runtime": model.Runtime,
-        "objective": None,
-        "makespan": None,
+        "objective": model.ObjVal if model.SolCount > 0 else None,
+        "makespan": W.X if model.SolCount > 0 else None,
         "task_completion": {},
         "qc_completion": {},
         "routes": {},
         "best_bound": model.ObjBound,
-        "gap": None,
+        "gap": model.MIPGap if model.SolCount > 0 else None,
         "node_count": model.NodeCount,
         "sol_count": model.SolCount
     }
