@@ -81,9 +81,6 @@ def solve_milp(
         return routes
 
     if model.SolCount > 0:
-        result["objective"] = model.ObjVal
-        result["makespan"] = W.X
-        result["gap"] = model.MIPGap
 
         for i in problem.tasks:
             result["task_completion"][i] = D[i].X
