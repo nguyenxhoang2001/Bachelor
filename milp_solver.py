@@ -22,7 +22,7 @@ def solve_milp(
         model.setParam(GRB.Param.MIPGap, mip_gap)
 
     model.setParam(GRB.Param.LogToConsole, 1 if verbose else 0)
-    model.setParam(GRB.Param.Threads, 0)
+    model.setParam(GRB.Param.Threads, 1)
     if log_file is not None:
         model.setParam(GRB.Param.LogFile, log_file)
 

@@ -88,15 +88,17 @@ def benchmark_configuration(
     )
 
 def main():
-    task_values: List[int] = [5, 10, 15]
+    task_values: List[int] = [5, 10, 15, 20, 25]
     crane_values: List[int] = [2, 3]
-    n_instances = 10
+    n_instances = 5
     seeds = list(range(1, n_instances + 1))
 
     time_limit_map = {
-        5: 100.0,
-        10: 1800.0,
-        15: 3600.0,
+        5: 500.0,
+        10: 1000.0,
+        15: 1500.0,
+        20: 2000.0,
+        25: 2500.0
     }
     mip_gap_map = {
         5: 0.01,
