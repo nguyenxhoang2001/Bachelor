@@ -46,13 +46,13 @@ def benchmark_configuration(
             problem,
             time_limit=time_limit,
             mip_gap=mip_gap,
-            verbose=True,
+            verbose=False
         )
         runtime = result.get("runtime")
         times.append(runtime if runtime is not None else float('nan'))
         makespan = result.get("makespan")
-        bound = result.get("best_bound")
         status_str = result.get("status")
+        gap = result.get("gap")
 
         if makespan is not None:
             objs.append(makespan)
@@ -61,10 +61,6 @@ def benchmark_configuration(
 
         if status_str == "OPTIMAL":
             gap = 0.0
-        elif makespan is not None and bound is not None and makespan > 0:
-            gap = 100.0 * (makespan - bound) / makespan
-        else:
-            gap = float('nan')
         gaps.append(gap)
 
         if status_str == "OPTIMAL":
@@ -88,22 +84,22 @@ def benchmark_configuration(
     )
 
 def main():
-    task_values: List[int] = [5, 10, 15, 20, 25]
+    task_values: List[int] = [5, 10, 15, 20]
     crane_values: List[int] = [2, 3]
     n_instances = 5
     seeds = list(range(1, n_instances + 1))
 
     time_limit_map = {
-        5: 500.0,
+        5: 2000.0,
         10: 1000.0,
         15: 1500.0,
         20: 2000.0,
-        25: 2500.0
     }
     mip_gap_map = {
-        5: 0.01,
+        5: None,
         10: None,
         15: None,
+        20: None
     }
     bay_count = 30
     results: List[ResultSummary] = []
@@ -128,7 +124,7 @@ def main():
     print('-' * len(header))
     for res in results:
         avg_obj_str = f"{res.avg_obj:.2f}" if res.avg_obj == res.avg_obj else "nan"
-        avg_gap_str = f"{res.avg_gap:.1f}" if res.avg_gap == res.avg_gap else "nan"
+        avg_gap_str = f"{res.avg_gap:.2f}" if res.avg_gap == res.avg_gap else "nan"
         avg_time_str = f"{res.avg_time:.2f}" if res.avg_time == res.avg_time else "nan"
         print(
             f"{res.K:<3} | {res.T:<3} | {res.n_instances:>5} | {avg_obj_str:>12} | "
