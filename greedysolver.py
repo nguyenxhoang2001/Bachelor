@@ -17,6 +17,11 @@ def solve_greedy(problem):
     for i, j in problem.phi:
         predecessors[j].add(i)
 
+    # Successor count: tasks with more successors are scheduled first (critical path)
+    successor_count = {t: 0 for t in problem.tasks}
+    for i, j in problem.phi:
+        successor_count[i] += 1
+
     # Non-simultaneity pairs
     incompatible = set(problem.psi)
 
@@ -24,12 +29,8 @@ def solve_greedy(problem):
     # Priority ordering
     # -----------------------------
     def priority_key(t):
-        """Sort by: bay (left→right), discharge first, deck first"""
-        return (
-            location[t],
-            0 if problem.operation[t] == 'D' else 1,
-            0 if problem.level[t] == 'deck' else 1
-        )
+        """Sort by: more successors first (critical path), then by bay position."""
+        return (-successor_count[t], location[t])
 
     unscheduled = sorted(problem.tasks, key=priority_key)
     completed = set()
@@ -45,28 +46,33 @@ def solve_greedy(problem):
     qc_task_times = {k: [] for k in problem.qcs}
 
     # -----------------------------
-    # Helper: Check non-simultaneity
+    # Helper: earliest feasible start avoiding non-simultaneity
     # -----------------------------
-    def violates_non_simultaneity(task_new, qc_new, start_new, finish_new):
+    def earliest_feasible_start(task_new, qc_new, earliest):
         """
-        Check if assigning task_new to qc_new at [start_new, finish_new]
-        would violate non-simultaneity with any task on other QCs.
+        Return the earliest start time >= earliest that does not overlap
+        with incompatible tasks already scheduled on other QCs.
+        Iteratively pushes the start time past any conflicting interval.
         """
-        for qc_other in problem.qcs:
-            if qc_other == qc_new:
-                continue  # Same QC = sequential, not simultaneous
-            
-            for task_other, start_other, finish_other in qc_task_times[qc_other]:
-                # Check if tasks are incompatible
-                if ((task_new, task_other) in incompatible or 
-                    (task_other, task_new) in incompatible):
-                    
-                    # Check if time windows overlap
-                    # Non-overlapping if: finish_new <= start_other OR finish_other <= start_new
-                    if not (finish_new <= start_other or finish_other <= start_new):
-                        return True  # Violation!
-        
-        return False
+        start = earliest
+        changed = True
+        while changed:
+            changed = False
+            finish = start + duration[task_new]
+            for qc_other in problem.qcs:
+                if qc_other == qc_new:
+                    continue
+                for task_other, start_other, finish_other in qc_task_times[qc_other]:
+                    if ((task_new, task_other) in incompatible or
+                            (task_other, task_new) in incompatible):
+                        if not (finish <= start_other or finish_other <= start):
+                            # Delay start to after the conflicting task finishes
+                            start = finish_other
+                            changed = True
+                            break
+                if changed:
+                    break
+        return start
 
     # -----------------------------
     # Main greedy loop
@@ -80,8 +86,8 @@ def solve_greedy(problem):
                 "Precedence deadlock: no available task but unscheduled tasks remain"
             )
 
-        # Greedy choice: select first available task (spatial order)
-        task = available[0]
+        # Select the most critical available task (most successors, then leftmost bay)
+        task = min(available, key=priority_key)
 
         # Find best QC for this task
         best_qc = None
@@ -95,13 +101,10 @@ def solve_greedy(problem):
             else:
                 travel = problem.travel_time[(qc, qc_pos[qc], task)]
 
-            # Calculate timing
-            start = qc_time[qc] + travel
+            # Delay start if needed to satisfy non-simultaneity constraints
+            earliest = qc_time[qc] + travel
+            start = earliest_feasible_start(task, qc, earliest)
             finish = start + duration[task]
-
-            # Check non-simultaneity constraint
-            if violates_non_simultaneity(task, qc, start, finish):
-                continue  # Skip this QC - would violate Ψ
 
             # Update best if this is earlier
             if finish < best_finish:
