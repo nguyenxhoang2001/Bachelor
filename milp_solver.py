@@ -1,7 +1,6 @@
 import gurobipy as gp
 from gurobipy import GRB
 
-
 def solve_milp(
     problem,
     time_limit: float = None,
