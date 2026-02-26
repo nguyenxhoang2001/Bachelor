@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import csv
 import random
+import time
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 from greedysolver import evaluate_schedule, solve_greedy
@@ -16,11 +18,16 @@ def _schedule_key(problem, schedule: Schedule) -> Tuple[Tuple[int, ...], ...]:
 def solve_tabu(
     problem,
     max_iteration: int = 50,
+    max_time: Optional[float] = None,
     tabu_tenure: Optional[int] = None,
     tenure_jitter: int = 3,
-    move_types: Sequence[str] = ("relocate", "swap"),
+    move_types: Sequence[str] = ("relocate", "swap", "intra_insert"),
     max_neighbors: Optional[int] = None,
     seed: Optional[int] = None,
+    verbose: bool = False,
+    log_every: int = 10,
+    return_trace: bool = False,
+    log_file: Optional[str] = None,
 ):
     """Simple tabu search that improves a greedy initial schedule.
 
@@ -28,6 +35,8 @@ def solve_tabu(
     - Tabu: store moves with an expiration iteration; forbid immediate reversal.
     - Aspiration: allow tabu moves if they improve the global best objective.
     - Speed: memoize schedule evaluations.
+    - Time limit: stop after max_time seconds if specified.
+    - Logging: optionally prints progress and/or returns a trace.
     """
 
     if seed is not None:
@@ -47,6 +56,9 @@ def solve_tabu(
 
     tabu_until: Dict[Tuple, int] = {}
     eval_cache: Dict[Tuple[Tuple[int, ...], ...], Dict] = {}
+
+    trace: List[Dict] = []
+    start_time = time.time()
 
     def eval_cached(s: Schedule) -> Dict:
         key = _schedule_key(problem, s)
@@ -76,6 +88,24 @@ def solve_tabu(
             best_objective = current_objective
             best_schedule = copy_schedule(current_schedule)
 
+        if verbose and (iteration % max(1, log_every) == 0 or iteration == max_iteration - 1):
+            print(
+                f"Iter {iteration:4d} | current={current_objective:,.3f} | best={best_objective:,.3f} | "
+                f"cache={len(eval_cache)} | tabu={len(tabu_until)} | move={candidate_move}"
+            )
+
+        trace.append(
+            {
+                "iteration": iteration,
+                "current_objective": float(current_objective),
+                "best_objective": float(best_objective),
+                "move": candidate_move,
+                "eval_cache_size": len(eval_cache),
+                "tabu_size": len(tabu_until),
+                "time": time.time() - start_time,
+            }
+        )
+
         # Add tabu (forbid immediate reversal)
         rev_sig = reverse_move_signature(candidate_move)
         tenure = tabu_tenure + (random.randint(0, tenure_jitter) if tenure_jitter > 0 else 0)
@@ -86,7 +116,34 @@ def solve_tabu(
             expired = [m for m, until in tabu_until.items() if until <= iteration]
             for m in expired:
                 tabu_until.pop(m, None)
+        
+        # Check time limit
+        if max_time is not None and (time.time() - start_time) >= max_time:
+            if verbose:
+                print(f"Time limit reached at iteration {iteration}")
+            break
 
+    if log_file is not None:
+        # Flat CSV that's easy to plot in Excel.
+        with open(log_file, "w", newline="") as f:
+            writer = csv.DictWriter(
+                f,
+                fieldnames=[
+                    "iteration",
+                    "current_objective",
+                    "best_objective",
+                    "eval_cache_size",
+                    "tabu_size",
+                    "move",
+                    "time",
+                ],
+            )
+            writer.writeheader()
+            for row in trace:
+                writer.writerow({**row, "move": str(row.get("move"))})
+
+    if return_trace:
+        return best_schedule, best_objective, trace
     return best_schedule, best_objective
 
 def copy_schedule(schedule: Schedule) -> Schedule:
@@ -121,7 +178,35 @@ def swap_tasks(
     new_schedule[qc_a][idx_a], new_schedule[qc_b][idx_b] = new_schedule[qc_b][idx_b], new_schedule[qc_a][idx_a]
     return new_schedule
 
+
+def intra_insert(
+    schedule: Schedule,
+    qc: int,
+    from_idx: int,
+    to_idx: int,
+) -> Schedule:
+    """Remove the task at from_idx and insert it at to_idx within the same QC."""
+    if from_idx == to_idx:
+        return schedule
+    new_schedule = copy_schedule(schedule)
+    seq = new_schedule[qc]
+    task = seq.pop(from_idx)
+    # after pop, list is shorter; inserting at end is fine
+    if to_idx >= len(seq):
+        seq.append(task)
+    else:
+        seq.insert(to_idx, task)
+    return new_schedule
+
 def move_signature(move: Tuple) -> Tuple:
+    # Keep signatures simple and explainable:
+    # - relocate: forbid moving a specific task from QC A to QC B (ignores insertion pos)
+    # - swap: forbid swapping the same pair of tasks between the same QCs
+    # - intra_insert: forbid reordering the same task on the same QC for a short time
+    mtype = move[0]
+    if mtype == "intra_insert":
+        _, qc, task, _, _ = move
+        return ("intra", task, qc)
     return move
 
 def reverse_move_signature(move: Tuple) -> Tuple:
@@ -132,12 +217,15 @@ def reverse_move_signature(move: Tuple) -> Tuple:
     if mtype == "swap":
         # swap is its own reverse
         return move
+    if mtype == "intra_insert":
+        # We store a task-level tabu for intra moves, so reverse is identical.
+        return move_signature(move)
     return move
 
 def generate_neighbors(
     schedule: Schedule,
     problem,
-    move_types: Sequence[str] = ("relocate", "swap"),
+    move_types: Sequence[str] = ("relocate", "swap", "intra_insert"),
     max_neighbors: Optional[int] = None,
 ) -> List[Tuple[Schedule, Tuple]]:
     neighbors: List[Tuple[Schedule, Tuple]] = []
@@ -169,6 +257,22 @@ def generate_neighbors(
                         neighbors.append((new_schedule, move))
                         if max_neighbors is not None and len(neighbors) >= max_neighbors:
                             return neighbors
+
+    if "intra_insert" in move_types:
+        for qc in qcs:
+            n = len(schedule[qc])
+            if n <= 1:
+                continue
+            for from_idx in range(n):
+                for to_idx in range(n):
+                    if from_idx == to_idx:
+                        continue
+                    new_schedule = intra_insert(schedule, qc, from_idx, to_idx)
+                    task = schedule[qc][from_idx]
+                    move = ("intra_insert", qc, task, from_idx, to_idx)
+                    neighbors.append((new_schedule, move))
+                    if max_neighbors is not None and len(neighbors) >= max_neighbors:
+                        return neighbors
 
     return neighbors
 
@@ -211,7 +315,7 @@ def local_search_step(
     iteration: int,
     best_objective: float,
     eval_cached,
-    move_types: Sequence[str] = ("relocate", "swap"),
+    move_types: Sequence[str] = ("relocate", "swap", "intra_insert"),
     max_neighbors: Optional[int] = None,
 ) -> Tuple[Optional[Schedule], Optional[float], Optional[Tuple]]:
     neighbors = generate_neighbors(current_schedule, problem, move_types=move_types, max_neighbors=max_neighbors)

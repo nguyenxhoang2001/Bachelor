@@ -1,0 +1,4 @@
+instance,num_qcs,num_tasks,num_bays,seed,milp_objective,milp_status,milp_runtime,tabu_objective,tabu_runtime,gap_percent
+1,3,11,30,854311,41638.53167046952,TIME_LIMIT,1800.24,41941.53,185.08,0.72
+2,3,18,30,156770,63405.54667447851,TIME_LIMIT,1800.20,63960.96,708.40,0.87
+3,3,18,30,156770,63405.54667447851,TIME_LIMIT,1800.19,63960.96,717.21,0.87

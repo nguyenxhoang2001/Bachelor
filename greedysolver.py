@@ -16,6 +16,31 @@ def _build_incompatibility_map(psi: Iterable[Tuple[int, int]]) -> Dict[int, Set[
         inc.setdefault(j, set()).add(i)
     return inc
 
+def check_interference(problem, schedule) -> Tuple[bool, Optional[Tuple[int, int, int, int]]]:
+    """Check non-crossing QC interference constraint.
+
+    Returns:
+        (ok, violation) where violation is (task_i, task_j, qc_i, qc_j)
+        with location[i] < location[j] but qc_i > qc_j.
+    """
+    qc_of_task: Dict[int, int] = {}
+    for qc, tasks in schedule.items():
+        for t in tasks:
+            qc_of_task[t] = qc
+
+    tasks = list(problem.tasks)
+    for i in tasks:
+        for j in tasks:
+            if problem.location[i] < problem.location[j]:
+                qc_i = qc_of_task.get(i)
+                qc_j = qc_of_task.get(j)
+                if qc_i is None or qc_j is None:
+                    return False, (i, j, qc_i or -1, qc_j or -1)
+                if qc_i > qc_j:
+                    return False, (i, j, qc_i, qc_j)
+
+    return True, None
+
 def _travel_time(problem, qc: int, prev_task: Optional[int], task: int) -> float:
     if prev_task is None:
         return problem.starting_travel_time[(qc, task)]
@@ -88,6 +113,7 @@ def solve_greedy(problem):
     # Predecessor map for precedence checking
     predecessors = _build_predecessors(problem.tasks, problem.phi)
     incompat_map = _build_incompatibility_map(problem.psi)
+    assigned_qc: Dict[int, int] = {}
 
     # -----------------------------
     # Priority ordering
@@ -140,7 +166,20 @@ def solve_greedy(problem):
         best_finish = float("inf")
 
         for task in available:
+            lower_qc = min(problem.qcs)
+            upper_qc = max(problem.qcs)
+            for t, qc in assigned_qc.items():
+                if location[t] < location[task]:
+                    lower_qc = max(lower_qc, qc)
+                elif location[t] > location[task]:
+                    upper_qc = min(upper_qc, qc)
+
+            if lower_qc > upper_qc:
+                continue
+
             for qc in problem.qcs:
+                if qc < lower_qc or qc > upper_qc:
+                    continue
                 start, finish = _earliest_feasible_start(
                     problem,
                     qc,
@@ -162,11 +201,12 @@ def solve_greedy(problem):
         if best_qc is None or best_task is None or best_start is None:
             raise RuntimeError(
                 "No feasible assignment found for any available task. "
-                f"All assignments violate non-simultaneity constraints."
+                "Assignments may violate non-simultaneity or interference constraints."
             )
 
         # Assign task to best QC
         schedule[best_qc].append(best_task)
+        assigned_qc[best_task] = best_qc
         qc_time[best_qc] = best_finish
         qc_pos[best_qc] = best_task
         qc_task_times[best_qc].append((best_task, best_start, best_finish))
@@ -220,6 +260,10 @@ def evaluate_schedule(problem, schedule):
         seen.extend(schedule.get(k, []))
     if sorted(seen) != sorted(tasks):
         raise ValueError("Schedule must assign each task exactly once")
+
+    ok, violation = check_interference(problem, schedule)
+    if not ok:
+        raise ValueError(f"Interference constraint violated: {violation}")
 
     qc_idx: Dict[int, int] = {k: 0 for k in qcs}
     qc_ready: Dict[int, float] = {k: float(problem.earliest_time[k]) for k in qcs}
