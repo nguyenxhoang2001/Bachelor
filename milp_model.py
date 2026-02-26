@@ -140,6 +140,7 @@ def add_constraints(model, problem, X, Y, D, Z, W):
                     )
                        
     for k in problem.qcs:
+        for j in problem.tasks:
             if (k,j,'T') in X:
                 model.addConstr(
                     D[j] + problem.final_travel_time.get((k,j),0) - Y[k] <= problem.M * (1 - X[(k,j,'T')]), name=f"completion_time_{k}_{j}"
