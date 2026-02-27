@@ -245,29 +245,28 @@ def main() -> None:
     # global seeds used across all experiments for reproducibility
     fixed_seeds = list(range(1, 6))
 
-    # 1. task scaling
+    """ 1. task scaling
     run_task_scaling(
         seeds=fixed_seeds,
         time_limit=1000.0,
         output_csv="task_scaling.csv",
-    )
-
-    # 2. capacity test
+    )"""
+    """ 2. capacity test
     run_capacity_test(
         Ks=[2, 3],
         Ts=[5, 6, 7, 8, 9, 10, 11, 12],
         seeds=fixed_seeds,
         time_limit=600.0,
         output_csv="capacity_test.csv",
-    )
+    )"""
 
     # 3. time-limit/anytime curve
     run_time_limit(
         K=3,
-        T=15,
-        num_bays=15,
-        seeds=[101, 202, 303],
-        time_limits=[50, 100, 200, 500, 1000],
+        T=9,
+        num_bays=9,
+        seeds=[101, 202],
+        time_limits=[1000, 1500, 2000, 2500],
         output_csv="time_limit.csv",
     )
 
