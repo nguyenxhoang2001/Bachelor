@@ -73,7 +73,7 @@ def run_task_scaling(
 
     for K in Ks:
         for T in Ts:
-            num_bays = T  # density constant by equating bays and tasks
+            num_bays = T
             config = ExperimentConfig(
                 experiment_type="task_scaling",
                 K=K,
@@ -188,7 +188,6 @@ def run_time_limit(
 ) -> None:
     rows: List[Dict[str, object]] = []
 
-    # generate once per seed so that the same instance is used across time limits
     problems: Dict[int, QCProblem] = {
         seed: QCProblem.generate(
             num_bays=num_bays,
@@ -242,30 +241,34 @@ def run_time_limit(
     write_results_csv(output_csv, rows, fieldnames, metadata)
 
 def main() -> None:
-    # global seeds used across all experiments for reproducibility
     fixed_seeds = list(range(1, 6))
 
-    """ 1. task scaling
+    '''
+    #1. task scaling
     run_task_scaling(
         seeds=fixed_seeds,
         time_limit=1000.0,
         output_csv="task_scaling.csv",
-    )"""
-    """ 2. capacity test
+    )
+    '''
+    #2. capacity test
+    '''
+    
     run_capacity_test(
         Ks=[2, 3],
         Ts=[5, 6, 7, 8, 9, 10, 11, 12],
         seeds=fixed_seeds,
         time_limit=600.0,
         output_csv="capacity_test.csv",
-    )"""
-
+    )
+'''
     # 3. time-limit/anytime curve
+    
     run_time_limit(
         K=3,
-        T=9,
-        num_bays=9,
-        seeds=[101, 202],
+        T=10,
+        num_bays=11,
+        seeds=fixed_seeds,
         time_limits=[1000, 1500, 2000, 2500],
         output_csv="time_limit.csv",
     )

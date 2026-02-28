@@ -29,19 +29,35 @@ def solve_tabu(
     return_trace: bool = False,
     log_file: Optional[str] = None,
 ):
-    """Simple tabu search that improves a greedy initial schedule.
+    """Tabu search: improve a greedy schedule by exploring nearby solutions.
 
-    - Neighborhoods: relocation with insertion + swap between QCs.
-    - Tabu: store moves with an expiration iteration; forbid immediate reversal.
-    - Aspiration: allow tabu moves if they improve the global best objective.
-    - Speed: memoize schedule evaluations.
-    - Time limit: stop after max_time seconds if specified.
-    - Logging: optionally prints progress and/or returns a trace.
+    Starts with a greedy solution, then iteratively moves to the best nearby
+    schedule. Forbidden (tabu) moves prevent immediately undoing recent changes.
+    If a tabu move is better than the best found so far (aspiration), it is allowed.
+
+    Args:
+        problem: QC scheduling problem instance.
+        max_iteration: Maximum iterations to run (default 50).
+        max_time: Time limit in seconds (optional).
+        tabu_tenure: How many iterations a move stays tabu (default: 10% of #tasks).
+        tenure_jitter: Random variance in tenure (default 3).
+        move_types: Which moves to use (default: relocate, swap, intra_insert).
+        max_neighbors: Limit neighborhood size to speed up search (optional).
+        seed: Random seed for reproducibility (optional).
+        verbose: Print progress each log_every iterations.
+        log_every: Frequency of verbose output (default 10).
+        return_trace: Return iteration trace for analysis (default False).
+        log_file: Save trace to CSV file (optional).
+
+    Returns:
+        If return_trace=False: (best_schedule, best_objective)
+        If return_trace=True: (best_schedule, best_objective, trace_list)
     """
 
     if seed is not None:
         random.seed(seed)
 
+    # Step 1: Build initial solution using greedy algorithm
     greedy = solve_greedy(problem)
     current_schedule: Schedule = greedy["schedule"]
     current_objective: float = float(greedy["objective"])
@@ -54,19 +70,26 @@ def solve_tabu(
         base = max(3, int(0.1 * len(problem.tasks)))
         tabu_tenure = base
 
-    tabu_until: Dict[Tuple, int] = {}
-    eval_cache: Dict[Tuple[Tuple[int, ...], ...], Dict] = {}
+    tabu_until: Dict[Tuple, int] = {}  # Stores which moves are forbidden until iteration N
+    eval_cache: Dict[Tuple[Tuple[int, ...], ...], Dict] = {}  # Cache schedule evaluations
+    max_cache_size = 1000  # Prevent unbounded memory growth
 
-    trace: List[Dict] = []
+    trace: List[Dict] = []  # Log of each iteration (for analysis)
     start_time = time.time()
 
     def eval_cached(s: Schedule) -> Dict:
+        """Evaluate schedule, re-using cached result if available."""
         key = _schedule_key(problem, s)
         if key not in eval_cache:
+            # If cache is full, remove a random entry to make room
+            if len(eval_cache) >= max_cache_size:
+                eval_cache.pop(next(iter(eval_cache)))
             eval_cache[key] = evaluate_schedule(problem, s)
         return eval_cache[key]
 
+    # Step 2: Main tabu search loop
     for iteration in range(max_iteration):
+        # Generate neighbors and pick the best (with tabu and aspiration rules)
         candidate_schedule, candidate_objective, candidate_move = local_search_step(
             problem,
             current_schedule,
@@ -147,6 +170,7 @@ def solve_tabu(
     return best_schedule, best_objective
 
 def copy_schedule(schedule: Schedule) -> Schedule:
+    """Make a deep copy of a schedule dict. Prevents accidental mutation."""
     return {qc: tasks.copy() for qc, tasks in schedule.items()}
 
 def relocate_task(
@@ -156,6 +180,7 @@ def relocate_task(
     to_qc: int,
     to_pos: Optional[int] = None,
 ) -> Schedule:
+    """Move a task from one QC's list to another QC's list at a given position."""
     new_schedule = copy_schedule(schedule)
     from_list = new_schedule[from_qc]
     to_list = new_schedule[to_qc]
@@ -174,10 +199,10 @@ def swap_tasks(
     qc_b: int,
     idx_b: int,
 ) -> Schedule:
+    """Swap two tasks between two different QCs."""
     new_schedule = copy_schedule(schedule)
     new_schedule[qc_a][idx_a], new_schedule[qc_b][idx_b] = new_schedule[qc_b][idx_b], new_schedule[qc_a][idx_a]
     return new_schedule
-
 
 def intra_insert(
     schedule: Schedule,
@@ -199,10 +224,13 @@ def intra_insert(
     return new_schedule
 
 def move_signature(move: Tuple) -> Tuple:
-    # Keep signatures simple and explainable:
-    # - relocate: forbid moving a specific task from QC A to QC B (ignores insertion pos)
-    # - swap: forbid swapping the same pair of tasks between the same QCs
-    # - intra_insert: forbid reordering the same task on the same QC for a short time
+    """Simplify a move into a tabu signature (what we forbid).
+    
+    For tabu checking, we compress some details to avoid over-forbidding:
+    - relocate: forbid task moving from QC A to QC B (ignore insertion position)
+    - swap: forbid swapping the same pair between the same QCs
+    - intra_insert: forbid reordering a task on the same QC
+    """
     mtype = move[0]
     if mtype == "intra_insert":
         _, qc, task, _, _ = move
@@ -210,6 +238,7 @@ def move_signature(move: Tuple) -> Tuple:
     return move
 
 def reverse_move_signature(move: Tuple) -> Tuple:
+    """Compute the signature of the reverse action (used to mark reverse moves tabu)."""
     mtype = move[0]
     if mtype == "relocate":
         _, t, from_qc, to_qc = move
@@ -228,6 +257,11 @@ def generate_neighbors(
     move_types: Sequence[str] = ("relocate", "swap", "intra_insert"),
     max_neighbors: Optional[int] = None,
 ) -> List[Tuple[Schedule, Tuple]]:
+    """Generate neighboring schedules by applying small moves.
+    
+    Enumerates all possible relocations, swaps, and intra-insertions.
+    If max_neighbors is set, returns at most that many neighbors (sampled in order).
+    """
     neighbors: List[Tuple[Schedule, Tuple]] = []
     qcs = list(problem.qcs)
 
@@ -284,6 +318,14 @@ def select_best_neighbor(
     best_objective: float,
     eval_cached,
 ) -> Tuple[Optional[Schedule], float, Optional[Tuple]]:
+    """Pick the best neighbor to move to, respecting tabu restrictions.
+    
+    Checks each neighbor:
+    - If it is tabu AND does not improve the global best, skip it.
+    - Otherwise, evaluate its objective and track the best.
+    
+    Returns: (best_schedule, best_objective, best_move_signature) or (None, inf, None).
+    """
     best_obj = float("inf")
     best_schedule: Optional[Schedule] = None
     best_move: Optional[Tuple] = None
@@ -318,6 +360,10 @@ def local_search_step(
     move_types: Sequence[str] = ("relocate", "swap", "intra_insert"),
     max_neighbors: Optional[int] = None,
 ) -> Tuple[Optional[Schedule], Optional[float], Optional[Tuple]]:
+    """One iteration of tabu search: generate neighbors and pick the best.
+    
+    Returns: (next_schedule, next_objective, move_used) or (None, None, None) if stuck.
+    """
     neighbors = generate_neighbors(current_schedule, problem, move_types=move_types, max_neighbors=max_neighbors)
     best_schedule, best_obj, best_move = select_best_neighbor(
         problem,
