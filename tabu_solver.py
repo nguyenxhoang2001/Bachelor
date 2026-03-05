@@ -23,36 +23,13 @@ def solve_tabu(
     tenure_jitter: int = 3,
     move_types: Sequence[str] = ("relocate", "swap", "intra_insert"),
     max_neighbors: Optional[int] = None,
+    no_improve_limit: Optional[int] = None,
     seed: Optional[int] = None,
     verbose: bool = False,
     log_every: int = 10,
     return_trace: bool = False,
     log_file: Optional[str] = None,
 ):
-    """Tabu search: improve a greedy schedule by exploring nearby solutions.
-
-    Starts with a greedy solution, then iteratively moves to the best nearby
-    schedule. Forbidden (tabu) moves prevent immediately undoing recent changes.
-    If a tabu move is better than the best found so far (aspiration), it is allowed.
-
-    Args:
-        problem: QC scheduling problem instance.
-        max_iteration: Maximum iterations to run (default 50).
-        max_time: Time limit in seconds (optional).
-        tabu_tenure: How many iterations a move stays tabu (default: 10% of #tasks).
-        tenure_jitter: Random variance in tenure (default 3).
-        move_types: Which moves to use (default: relocate, swap, intra_insert).
-        max_neighbors: Limit neighborhood size to speed up search (optional).
-        seed: Random seed for reproducibility (optional).
-        verbose: Print progress each log_every iterations.
-        log_every: Frequency of verbose output (default 10).
-        return_trace: Return iteration trace for analysis (default False).
-        log_file: Save trace to CSV file (optional).
-
-    Returns:
-        If return_trace=False: (best_schedule, best_objective)
-        If return_trace=True: (best_schedule, best_objective, trace_list)
-    """
 
     if seed is not None:
         random.seed(seed)
@@ -76,6 +53,10 @@ def solve_tabu(
 
     trace: List[Dict] = []  # Log of each iteration (for analysis)
     start_time = time.time()
+    
+    # No-improvement counter for early stopping
+    no_improve_counter = 0
+    last_best_objective = best_objective
 
     def eval_cached(s: Schedule) -> Dict:
         """Evaluate schedule, re-using cached result if available."""
@@ -97,24 +78,29 @@ def solve_tabu(
             iteration,
             best_objective,
             eval_cached,
-            move_types=move_types,
-            max_neighbors=max_neighbors,
+            move_types,
+            max_neighbors,
         )
-
+        
+        # If no valid move found, continue with current schedule (exploration)
         if candidate_schedule is None or candidate_move is None:
-            break
+            no_improve_counter += 1
+        else:
+            current_schedule = candidate_schedule
+            current_objective = candidate_objective
 
-        current_schedule = candidate_schedule
-        current_objective = candidate_objective
+            # Check for improvement
+            if current_objective < best_objective:
+                best_objective = current_objective
+                best_schedule = copy_schedule(current_schedule)
+                no_improve_counter = 0  # Reset counter on improvement
+            else:
+                no_improve_counter += 1
 
-        if current_objective < best_objective:
-            best_objective = current_objective
-            best_schedule = copy_schedule(current_schedule)
-
-        if verbose and (iteration % max(1, log_every) == 0 or iteration == max_iteration - 1):
+        if verbose and iteration % log_every == 0:
             print(
-                f"Iter {iteration:4d} | current={current_objective:,.3f} | best={best_objective:,.3f} | "
-                f"cache={len(eval_cache)} | tabu={len(tabu_until)} | move={candidate_move}"
+                f"Iter {iteration:5d} | obj={best_objective:.2f} | "
+                f"no_improve={no_improve_counter} | cache={len(eval_cache)} | tabu={len(tabu_until)}"
             )
 
         trace.append(
@@ -123,18 +109,27 @@ def solve_tabu(
                 "current_objective": float(current_objective),
                 "best_objective": float(best_objective),
                 "move": candidate_move,
+                "no_improve_counter": no_improve_counter,
                 "eval_cache_size": len(eval_cache),
                 "tabu_size": len(tabu_until),
                 "time": time.time() - start_time,
             }
         )
 
-        # Add tabu (forbid immediate reversal)
-        rev_sig = reverse_move_signature(candidate_move)
-        tenure = tabu_tenure + (random.randint(0, tenure_jitter) if tenure_jitter > 0 else 0)
-        tabu_until[rev_sig] = iteration + tenure
+        # Add tabu (forbid immediate reversal) if we had a valid move
+        if candidate_move is not None:
+            rev_sig = reverse_move_signature(candidate_move)
+            tenure = tabu_tenure + (random.randint(0, tenure_jitter) if tenure_jitter > 0 else 0)
+            tabu_until[rev_sig] = iteration + tenure
 
-        # Cleanup expired entries (cheap)
+        # Check no-improvement limit
+        if no_improve_limit is not None and no_improve_counter >= no_improve_limit:
+            if verbose:
+                print(f"No-improvement limit reached at iteration {iteration}")
+            break
+        
+        # Cleanup expired tabu entries (cheap)
+        # Check every 10 iterations to remove expired entries
         if iteration % 10 == 0 and tabu_until:
             expired = [m for m, until in tabu_until.items() if until <= iteration]
             for m in expired:
@@ -170,7 +165,6 @@ def solve_tabu(
     return best_schedule, best_objective
 
 def copy_schedule(schedule: Schedule) -> Schedule:
-    """Make a deep copy of a schedule dict. Prevents accidental mutation."""
     return {qc: tasks.copy() for qc, tasks in schedule.items()}
 
 def relocate_task(
@@ -224,13 +218,6 @@ def intra_insert(
     return new_schedule
 
 def move_signature(move: Tuple) -> Tuple:
-    """Simplify a move into a tabu signature (what we forbid).
-    
-    For tabu checking, we compress some details to avoid over-forbidding:
-    - relocate: forbid task moving from QC A to QC B (ignore insertion position)
-    - swap: forbid swapping the same pair between the same QCs
-    - intra_insert: forbid reordering a task on the same QC
-    """
     mtype = move[0]
     if mtype == "intra_insert":
         _, qc, task, _, _ = move
@@ -257,11 +244,6 @@ def generate_neighbors(
     move_types: Sequence[str] = ("relocate", "swap", "intra_insert"),
     max_neighbors: Optional[int] = None,
 ) -> List[Tuple[Schedule, Tuple]]:
-    """Generate neighboring schedules by applying small moves.
-    
-    Enumerates all possible relocations, swaps, and intra-insertions.
-    If max_neighbors is set, returns at most that many neighbors (sampled in order).
-    """
     neighbors: List[Tuple[Schedule, Tuple]] = []
     qcs = list(problem.qcs)
 
@@ -318,14 +300,6 @@ def select_best_neighbor(
     best_objective: float,
     eval_cached,
 ) -> Tuple[Optional[Schedule], float, Optional[Tuple]]:
-    """Pick the best neighbor to move to, respecting tabu restrictions.
-    
-    Checks each neighbor:
-    - If it is tabu AND does not improve the global best, skip it.
-    - Otherwise, evaluate its objective and track the best.
-    
-    Returns: (best_schedule, best_objective, best_move_signature) or (None, inf, None).
-    """
     best_obj = float("inf")
     best_schedule: Optional[Schedule] = None
     best_move: Optional[Tuple] = None
@@ -360,10 +334,6 @@ def local_search_step(
     move_types: Sequence[str] = ("relocate", "swap", "intra_insert"),
     max_neighbors: Optional[int] = None,
 ) -> Tuple[Optional[Schedule], Optional[float], Optional[Tuple]]:
-    """One iteration of tabu search: generate neighbors and pick the best.
-    
-    Returns: (next_schedule, next_objective, move_used) or (None, None, None) if stuck.
-    """
     neighbors = generate_neighbors(current_schedule, problem, move_types=move_types, max_neighbors=max_neighbors)
     best_schedule, best_obj, best_move = select_best_neighbor(
         problem,

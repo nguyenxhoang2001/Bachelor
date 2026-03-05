@@ -1,0 +1,40 @@
+# Benchmark Configuration for QCSP
+# This YAML file controls all parameters for the benchmark framework
+
+# Instance generation parameters
+instance:
+  processing_time_range: [3.0, 180.0]
+  travel_per_bay: 1.0
+  precedence_probability: 0.3
+  num_bays_mode: "proportional"  # "fixed" or "proportional"
+  fixed_bays: 30
+
+# MILP solver settings
+milp:
+  time_limit: 1000.0  # seconds
+  threads: 1
+
+# Heuristic solver settings
+heuristic:
+  time_limit: 1000.0  # seconds (match MILP for fair comparison)
+  max_iterations: 200000
+  no_improve_limit: 5000  # Stop after 5000 iterations without improvement
+  seed: 42
+
+# Part A: Optimality Check Suite (small instances)
+# Purpose: Check if heuristic reaches optimal solutions
+part_a:
+  task_sizes: [4, 5, 6, 7, 8]
+  qc_counts: [2, 3]
+  num_instances_per_config: 20
+  seed_base: 42
+
+# Part B: Primal Bound Race Suite (larger instances)
+# Purpose: Compare primal bound development over time
+part_b:
+  task_sizes: [20, 25, 30, 35, 40]
+  qc_counts: [2, 3]
+  num_instances_per_config: 5
+  seed_base: 1000
+  # Time checkpoints for comparison (seconds)
+  checkpoints: [1, 5, 10, 30, 60, 120, 300, 600, 1000]

@@ -1,0 +1,138 @@
+pages=47
+
+==================== PAGE 25 ====================
+vides reliable optimality certification only for small instances. While problems with up
+to eight tasks can be solved to proven optimality within the prescribed time limit, in-
+stances with nine or more tasks consistently fail to close the optimality gap. The time
+limit experiment further shows that feasible incumbent solutions are obtained rapidly ,
+yet the dual bound improves only gradually . This behavior suggests that the computa-
+tional bottleneck lies not in finding feasible schedules, but in tightening the dual bound
+sufficiently to close the gap. A potential explanation may be the presence of large Big-
+M coefficients and resulting weak linear programming relaxations, which can limit the
+strength of dual bounds and slow convergence.
+Given that realistic terminal planning scenarios typically involve significantly more than
+nine tasks, exact solution approaches appear to be of limited practical applicability un-
+der strict time constraints. These observations motivate the investigation of heuristic
+methods, which aim to generate high-quality feasible solutions within short computa-
+tion times without requiring optimality certification.
+5 Heuristic Solution Approach
+5.1 Design Principles
+The heuristic follows a construction–improvement design. First, a feasible schedule is
+generated using a greedy rule. Second, the schedule is iteratively improved using tabu
+search.
+A solution is represented as a mapping from quay cranes to ordered task sequences:
+S = {πk | k ∈ K},
+where each sequence πk defines the processing order of tasks assigned to crane k. Each
+task appears exactly once across all sequences.
+The timed schedule is obtained by computing start times sequentially . For each task, the
+start time is defined as the earliest time at which:
+• the crane has completed its previous task and reached the required bay ,
+• all predecessor tasks have finished,
+• no interference with adjacent cranes occurs.
+If any of these conditions is not satisfied, the crane remains idle until the constraint is
+resolved. This waiting time ensures that all feasibility requirements are fulfilled.
+20
+
+==================== PAGE 26 ====================
+The objective function is defined as
+f(S) = α1 · Cmax + α2 ·
+X
+i∈Ω
+Ci,
+where Ci denotes the completion time of task i and Cmax represents the makespan of
+the schedule.
+The overall structure of the heuristic is summarized in Algorithm 1.
+Algorithm 1: Greedy & Tabu search
+1: InputInstance()
+2: S⋆ ← ∅
+3: repeat
+4: Phase 1: S ← GreedyConstruction()
+5: Phase 2: S ← TabuSearchImprovement(S)
+6: if S⋆ = ∅ or f(S) < f (S⋆) then
+7: S⋆ ← S
+8: end if
+9: until stopping criterion is satisfied
+10: return S⋆
+5.2 Construction Phase
+The construction phase builds an initial feasible schedule by adding one task at a time
+to an incomplete solution. The current solution is represented by the crane sequences
+{πk | k ∈ K} , where each sequence contains the tasks already assigned to crane k in
+processing order. Initially , all tasks are unscheduled, i.e., Ωuns = Ω. The procedure is
+repeated until all tasks have been assigned.
+Step 1: Determine precedence-feasible tasks. Let Ωuns denote the set of tasks that are
+unscheduled. From this set, the subset of precedence-feasible tasks is constructed
+as
+Ωavail = {i ∈ Ωuns | all predecessors of i are already scheduled}.
+Only tasks in Ωavail are considered in the current iteration. This ensures that prece-
+dence constraints are satisfied by construction.
+Step 2: Generate candidate assignments. For each task i ∈ Ωavail and each crane k ∈
+K, a candidate schedule is formed by appending i to the end of πk. At this point,
+only the order decisions are specified; start times are not yet fixed.
+21
+
+==================== PAGE 27 ====================
+Step 3: Evaluate candidates and compute completion times. Each candidate sched-
+ule is evaluated immediately . Start and completion times are recomputed sequen-
+tially along the crane sequences. A task can start only after:
+• the crane has completed its previous task and reached the required bay
+(travel time),
+• all predecessor tasks have finished (precedence),
+• no simultaneous processing with conflicting tasks occurs (interference).
+If any of these conditions is not satisfied, the task start is postponed and the crane
+remains idle until the earliest feasible start time is reached. The resulting comple-
+tion time of task i under crane k is denoted by C(k)
+i .
+Step 4: Select best candidate. Among all evaluated task–crane combinations, the pair
+(i⋆, k⋆) that yields the smallest completion time is selected. If multiple task–crane
+pairs result in identical completion times, the first encountered pair is selected.
+Step 5: Update the partial schedule. Task i⋆ is permanently appended to the sequence
+of crane k⋆. The task is removed from Ωuns, and the procedure returns to Step 1.
+The construction phase terminates once Ωuns is empty , resulting in a complete initial
+schedule that serves as the starting point for the improvement phase.
+5.3 Improvement Phase
+The greedy solution is refined using a tabu search procedure. Starting from the ini-
+tial schedule, the algorithm iteratively explores neighboring solutions and replaces the
+current schedule by the best admissible neighbor.
+Step 1: Neighborhood generation. In each iteration, a set of neighboring solutions is
+generated through systematic modification of the task sequences. The following
+local operators are applied:
+• Relocate: remove a task from one crane sequence and insert it at a selected
+position in another crane sequence.
+• Swap: exchange two tasks assigned to different cranes.
+• Intra-insert: remove a task from a crane sequence and reinsert it at a differ-
+ent position within the same sequence.
+22
+
+==================== PAGE 28 ====================
+The neighborhood is generated systematically by considering all admissible moves,
+with an optional limit on the number of neighbors.
+Step 2: Evaluation. Each neighboring solution is evaluated using the same schedule
+generation procedure as in the construction phase. Start times are recomputed se-
+quentially , ensuring feasibility with respect to precedence, interference, and travel
+constraints. The objective value is then calculated for comparison.
+Step 3: Selection and tabu restriction. Among all evaluated neighbors, the best ad-
+missible solution is selected. A solution is considered admissible if the corre-
+sponding move is not currently stored in the tabu list or if it satisfies the aspiration
+criterion.
+The tabu list stores attributes of recently executed moves. These move attributes
+remain prohibited for a fixed number of iterations to prevent immediate reversal
+and cycling.
+Step 4: Aspiration criterion. A tabu move is accepted if it results in a solution that
+improves upon the globally best objective value found so far.
+Step 5: Termination. The search terminates after a predefined number of iterations or
+when no improvement is observed for a specified number of consecutive iterations.
+5.4 Illustrative Numerical Example
+To illustrate the behavior of the proposed heuristic, a small numerical example is pre-
+sented. The greedy phase constructs a feasible schedule by selecting the task–crane
+assignment with the smallest earliest completion time under the current partial solu-
+tion. The tabu search phase can then improve the schedule by modifying local order
+decisions, while feasibility is preserved through the same sequential schedule evaluation
+procedure.
+Input data
+Two quay cranes are available, K = {1, 2}, and five tasks must be scheduled, Ω =
+{1, 2, 3, 4, 5}. Processing times pi and bay locations li are given in Table 4.
+Table 4: Input data for the numerical example
+Task i 1 2 3 4 5
+Bay li 2 3 5 6 9
+Processing time pi 6 5 4 7 3
+23

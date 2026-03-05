@@ -17,12 +17,6 @@ def _build_incompatibility_map(psi: Iterable[Tuple[int, int]]) -> Dict[int, Set[
     return inc
 
 def check_interference(problem, schedule) -> Tuple[bool, Optional[Tuple[int, int, int, int]]]:
-    """Check non-crossing QC interference constraint.
-
-    Returns:
-        (ok, violation) where violation is (task_i, task_j, qc_i, qc_j)
-        with location[i] < location[j] but qc_i > qc_j.
-    """
     qc_of_task: Dict[int, int] = {}
     for qc, tasks in schedule.items():
         for t in tasks:
@@ -240,15 +234,6 @@ def solve_greedy(problem):
     }
 
 def evaluate_schedule(problem, schedule):
-    """Evaluate a schedule (QC -> ordered task list).
-
-    Timing policy (simple + thesis-friendly): Serial Schedule Generation Scheme (SSGS)
-    - Each QC executes its list in order (can wait).
-    - A task can start only after all predecessors finish (Φ).
-    - Incompatible tasks (Ψ) cannot overlap; waiting is inserted as needed.
-    - Final travel back to the QC's final position is included in QC completion times.
-    """
-
     tasks = list(problem.tasks)
     qcs = list(problem.qcs)
     predecessors = _build_predecessors(tasks, problem.phi)

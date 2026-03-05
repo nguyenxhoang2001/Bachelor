@@ -257,6 +257,8 @@ def run_benchmark(
     
     # Prepare CSV
     csv_rows = []
+    # Summary for small instances (no plots)
+    summary_rows = []
     
     print(f"\n{'='*70}")
     print(f"Starting Benchmark: {run_name}")
@@ -312,15 +314,47 @@ def run_benchmark(
         else:
             gap = None
         
-        # Parse MILP log for primal bounds
-        print(f"  Parsing MILP log and generating plot...")
-        milp_bounds = parse_gurobi_log(log_file)
-        
-        # Generate plot
-        plot_file = os.path.join(output_dir, f"{run_name}_inst{i+1}.png")
-        plot_title = f"Instance {i+1}: {num_qcs} QCs, {num_tasks} Tasks, {FIXED_BAYS} Bays"
-        plot_convergence(milp_bounds, tabu_trace, plot_file, plot_title, time_limit=time_limit)
-        print(f"  Plot saved: {plot_file}")
+        # For small instances (up to small max tasks) we skip plots and collect a compact summary
+        small_max = INSTANCE_SIZES["small"][1]
+        if num_tasks <= small_max:
+            # Compute tabu iterations from trace (last iteration index + 1) and tabu runtime
+            if tabu_trace:
+                tabu_iterations = int(tabu_trace[-1].get("iteration", len(tabu_trace) - 1)) + 1
+            else:
+                tabu_iterations = 0
+
+            # Normalize MILP status to user-friendly values
+            status_norm = milp_status.upper()
+            if status_norm == "OPTIMAL":
+                milp_status_label = "optimal"
+            elif status_norm == "TIME_LIMIT":
+                milp_status_label = "timelimit"
+            else:
+                milp_status_label = milp_status.lower()
+
+            summary_rows.append({
+                "instance": i + 1,
+                "num_qcs": num_qcs,
+                "num_tasks": num_tasks,
+                "seed": seed,
+                "milp_objective": milp_objective if milp_objective is not None else "N/A",
+                "milp_status": milp_status_label,
+                "milp_runtime": f"{milp_runtime:.2f}",
+                "tabu_objective": f"{tabu_objective:.2f}" if tabu_objective is not None else "N/A",
+                "tabu_runtime": f"{tabu_runtime:.2f}",
+                "tabu_iterations": tabu_iterations,
+                "gap_percent": f"{gap:.2f}" if gap is not None else "N/A",
+            })
+            print(f"  Small-instance summary recorded (no plot)")
+        else:
+            print(f"  Parsing MILP log and generating plot...")
+            milp_bounds = parse_gurobi_log(log_file)
+            
+            # Generate plot
+            plot_file = os.path.join(output_dir, f"{run_name}_inst{i+1}.png")
+            plot_title = f"Instance {i+1}: {num_qcs} QCs, {num_tasks} Tasks, {FIXED_BAYS} Bays"
+            plot_convergence(milp_bounds, tabu_trace, plot_file, plot_title, time_limit=time_limit)
+            print(f"  Plot saved: {plot_file}")
         
         # Store results
         csv_rows.append({
@@ -350,6 +384,20 @@ def run_benchmark(
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(csv_rows)
+    # If we collected small-instance summaries, write them to a separate CSV for easy inspection
+    if summary_rows:
+        summary_file = os.path.join(output_dir, f"{run_name}_summary.csv")
+        print(f"Writing small-instance summary to {summary_file}...")
+        with open(summary_file, 'w', newline='') as f:
+            s_fields = [
+                "instance", "num_qcs", "num_tasks", "seed",
+                "milp_objective", "milp_status", "milp_runtime",
+                "tabu_objective", "tabu_runtime", "tabu_iterations", "gap_percent",
+            ]
+            writer = csv.DictWriter(f, fieldnames=s_fields)
+            writer.writeheader()
+            writer.writerows(summary_rows)
+        print(f"Summary saved to: {summary_file}")
     
     print(f"\n{'='*70}")
     print(f"Benchmark Complete!")
