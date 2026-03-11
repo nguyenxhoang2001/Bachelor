@@ -38,7 +38,7 @@ DEFAULT_CONFIG: Dict[str, object] = {
     "part_a": {
         "task_sizes": [4, 5, 6, 7, 8],
         "qc_counts": [2, 3],
-        "num_instances_per_config": 5,
+        "num_instances_per_config": 20,
         "seed_base": 42,
         "time_limit": 1000.0,
     },

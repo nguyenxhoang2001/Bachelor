@@ -242,9 +242,10 @@ def run_time_limit(
 
 def main() -> None:
     fixed_seeds = list(range(1, 6))
+    task_scaling_seeds = list(range(1, 21))
 
     run_task_scaling(
-        seeds=fixed_seeds,
+        seeds=task_scaling_seeds,
         time_limit=1000.0,
         output_csv="task_scaling.csv",
     )

@@ -143,6 +143,122 @@ def run_part_b_single_config(
     }
 
 
+def run_part_b_single_instance(
+    num_tasks: int,
+    num_qcs: int,
+    instance_id: int,
+    seed_base: int,
+    checkpoints: List[float],
+    instance_config: Dict,
+    milp_config: Dict,
+    heuristic_config: Dict,
+) -> Dict:
+    factory = InstanceFactory(instance_config)
+    seed = seed_base + instance_id
+
+    problem, metadata = factory.generate(num_tasks, num_qcs, seed)
+    metadata["instance_id"] = instance_id
+    metadata["config_id"] = f"T{num_tasks}_K{num_qcs}"
+
+    # Run MILP
+    timer = Timer().start()
+    milp_result, milp_trace = solve_milp_with_tracking(
+        problem,
+        time_limit=milp_config["time_limit"],
+        threads=milp_config["threads"]
+    )
+    milp_result["runtime"] = timer.stop()
+
+    # Run Heuristic
+    timer = Timer().start()
+    heur_result, heur_trace = solve_heuristic_with_tracking(
+        problem,
+        time_limit=heuristic_config["time_limit"],
+        max_iterations=heuristic_config["max_iterations"],
+        no_improve_limit=heuristic_config.get("no_improve_limit"),
+        seed=heuristic_config.get("seed", 42)
+    )
+    heur_result["runtime"] = timer.stop()
+
+    milp_checkpoints = extract_checkpoints(milp_trace, checkpoints, "incumbent")
+    heur_checkpoints = extract_checkpoints(heur_trace, checkpoints, "best_objective")
+
+    winner = determine_winner(
+        milp_result["objective"],
+        heur_result["objective"] if heur_result["is_feasible"] else None
+    )
+
+    gap_milp_heur = None
+    if (
+        milp_result["objective"] is not None
+        and heur_result["objective"] is not None
+        and heur_result["is_feasible"]
+    ):
+        gap_milp_heur = (heur_result["objective"] - milp_result["objective"]) / \
+            max(abs(heur_result["objective"]), 1e-6) * 100
+
+    result_row = {
+        "instance_id": metadata["instance_id"],
+        "config_id": metadata["config_id"],
+        "num_tasks": metadata["num_tasks"],
+        "num_qcs": metadata["num_qcs"],
+        "num_bays": metadata["num_bays"],
+        "seed": metadata["seed"],
+        "milp_status": milp_result["status"],
+        "milp_final_obj": format_value(milp_result["objective"]),
+        "milp_best_bound": format_value(milp_result["best_bound"]),
+        "milp_gap": format_value(milp_result["gap"]),
+        "milp_runtime": format_value(milp_result["runtime"]),
+        "milp_node_count": milp_result["node_count"],
+        "milp_sol_count": milp_result["sol_count"],
+        "heuristic_final_obj": format_value(heur_result["objective"]),
+        "heuristic_runtime": format_value(heur_result["runtime"]),
+        "heuristic_iterations": heur_result["iterations"],
+        "heuristic_feasible": heur_result["is_feasible"],
+        "winner": winner,
+        "gap_milp_heur_percent": format_value(gap_milp_heur),
+    }
+
+    for cp in checkpoints:
+        result_row[f"milp_obj_at_{cp}s"] = format_value(milp_checkpoints.get(cp))
+        result_row[f"heur_obj_at_{cp}s"] = format_value(heur_checkpoints.get(cp))
+
+    timeseries_rows = []
+    for entry in milp_trace:
+        timeseries_rows.append({
+            "instance_id": instance_id,
+            "method": "MILP",
+            "time": format_value(entry.get("time", 0.0)),
+            "objective": format_value(entry.get("incumbent")),
+            "best_bound": format_value(entry.get("best_bound")),
+            "gap": format_value(entry.get("gap")),
+        })
+
+    for entry in heur_trace:
+        timeseries_rows.append({
+            "instance_id": instance_id,
+            "method": "HEURISTIC",
+            "time": format_value(entry.get("time", 0.0)),
+            "objective": format_value(entry.get("best_objective")),
+            "best_bound": "N/A",
+            "gap": "N/A",
+        })
+
+    timeseries_rows.sort(
+        key=lambda row: (
+            row["method"],
+            float(row["time"]) if row["time"] != "N/A" else 0.0,
+        )
+    )
+
+    return {
+        "config_id": metadata["config_id"],
+        "instance_id": instance_id,
+        "run_row": result_row,
+        "timeseries_rows": timeseries_rows,
+    }
+
+
 def run_part_b(config_path: str, output_dir: str):
     # Load config
     config = load_yaml(config_path)
@@ -222,43 +338,35 @@ def run_part_b(config_path: str, output_dir: str):
                 timeseries_csv.add_row(row)
     else:
         with ProcessPoolExecutor(max_workers=parallel_workers) as executor:
-            future_to_cfg = {}
+            future_to_instance = {}
             for cfg_idx, (num_tasks, num_qcs) in enumerate(config_pairs):
                 start_id = cfg_idx * num_instances_per_config
-                future = executor.submit(
-                    run_part_b_single_config,
-                    num_tasks,
-                    num_qcs,
-                    num_instances_per_config,
-                    seed_base,
-                    start_id,
-                    checkpoints,
-                    instance_config,
-                    milp_config,
-                    heuristic_config,
-                )
-                future_to_cfg[future] = (num_tasks, num_qcs)
+                for i in range(num_instances_per_config):
+                    instance_id = start_id + i
+                    future = executor.submit(
+                        run_part_b_single_instance,
+                        num_tasks,
+                        num_qcs,
+                        instance_id,
+                        seed_base,
+                        checkpoints,
+                        instance_config,
+                        milp_config,
+                        heuristic_config,
+                    )
+                    future_to_instance[future] = (num_tasks, num_qcs, instance_id)
 
             completed = 0
-            for future in as_completed(future_to_cfg):
-                num_tasks, num_qcs = future_to_cfg[future]
+            for future in as_completed(future_to_instance):
+                num_tasks, num_qcs, instance_id = future_to_instance[future]
                 payload = future.result()
-                payload["run_rows"].sort(key=lambda row: int(row["instance_id"]))
-                payload["timeseries_rows"].sort(
-                    key=lambda row: (
-                        int(row["instance_id"]),
-                        row["method"],
-                        float(row["time"]) if row["time"] != "N/A" else 0.0,
-                    )
-                )
-                for row in payload["run_rows"]:
-                    results_csv.add_row(row)
+                results_csv.add_row(payload["run_row"])
                 for row in payload["timeseries_rows"]:
                     timeseries_csv.add_row(row)
                 completed += 1
                 print(
-                    f"  Finished config T{num_tasks}_K{num_qcs} "
-                    f"({completed}/{len(config_pairs)})"
+                    f"  Finished instance {instance_id} in T{num_tasks}_K{num_qcs} "
+                    f"({completed}/{total_instances})"
                 )
     
     # Write results
