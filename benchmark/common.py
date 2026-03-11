@@ -63,14 +63,19 @@ class CSVWriter:
         self.filepath = filepath
         self.fieldnames = fieldnames
         self.rows = []
+        # Write header immediately so the file exists from the start
+        ensure_dir(os.path.dirname(os.path.abspath(filepath)))
+        with open(filepath, "w", newline="") as f:
+            csv.DictWriter(f, fieldnames=fieldnames).writeheader()
     
     def add_row(self, row: Dict):
-        """Add a row (will be written on flush)."""
+        """Add a row and immediately append it to disk."""
         self.rows.append(row)
+        with open(self.filepath, "a", newline="") as f:
+            csv.DictWriter(f, fieldnames=self.fieldnames).writerow(row)
     
     def flush(self):
-        """Write all rows to CSV file."""
-        write_csv(self.filepath, self.rows, self.fieldnames)
+        """No-op kept for backward compatibility — rows are already on disk."""
         print(f"Written {len(self.rows)} rows to {self.filepath}")
 
 

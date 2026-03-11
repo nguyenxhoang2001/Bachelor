@@ -53,6 +53,9 @@ Plots will be saved to `results/figures/`:
 python -m benchmark.cli run --config configs/benchmark.yaml --suite partB --output results/
 ```
 
+To run Part B configs in parallel, set `part_b.parallel_workers` in `configs/benchmark.yaml`.
+Each `(task_size, qc_count)` pair is executed by a separate worker, and outputs are still merged into one combined `partB_runs.csv`, `partB_timeseries.csv`, and `partB_summary.csv`.
+
 Expected runtime: ~2-4 hours (depending on configuration)
 
 Output files in `results/`:

@@ -1,7 +1,3 @@
-"""
-MILP solver with Gurobi callback for progress tracking.
-"""
-
 import time
 from typing import Dict, List, Tuple
 import sys
@@ -17,14 +13,6 @@ def solve_milp_with_tracking(
     time_limit: float,
     threads: int = 1
 ) -> Tuple[Dict, List[Dict]]:
-    """
-    Solve MILP with log parsing for progress tracking.
-    
-    Returns:
-        (result_dict, timeseries) where:
-        - result_dict: final status, objective, bound, runtime, gap
-        - timeseries: list of progress events parsed from log
-    """
     import tempfile
     import os
     
@@ -70,12 +58,6 @@ def solve_milp_with_tracking(
 
 
 def parse_gurobi_log_timeseries(log_file: str, start_time: float) -> List[Dict]:
-    """
-    Parse Gurobi log to extract incumbent/bound trajectory.
-    
-    Returns:
-        List of dicts with keys: time, incumbent, best_bound, gap, event
-    """
     import re
     
     timeseries = []

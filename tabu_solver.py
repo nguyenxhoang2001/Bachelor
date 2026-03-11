@@ -34,7 +34,6 @@ def solve_tabu(
     if seed is not None:
         random.seed(seed)
 
-    # Step 1: Build initial solution using greedy algorithm
     greedy = solve_greedy(problem)
     current_schedule: Schedule = greedy["schedule"]
     current_objective: float = float(greedy["objective"])
@@ -42,35 +41,28 @@ def solve_tabu(
     best_schedule: Schedule = copy_schedule(current_schedule)
     best_objective: float = current_objective
 
-    # Tenure rule (transparent + instance-size dependent)
     if tabu_tenure is None:
         base = max(3, int(0.1 * len(problem.tasks)))
         tabu_tenure = base
 
-    tabu_until: Dict[Tuple, int] = {}  # Stores which moves are forbidden until iteration N
-    eval_cache: Dict[Tuple[Tuple[int, ...], ...], Dict] = {}  # Cache schedule evaluations
-    max_cache_size = 1000  # Prevent unbounded memory growth
+    tabu_until: Dict[Tuple, int] = {}
+    eval_cache: Dict[Tuple[Tuple[int, ...], ...], Dict] = {}
+    max_cache_size = 1000
 
-    trace: List[Dict] = []  # Log of each iteration (for analysis)
+    trace: List[Dict] = []
     start_time = time.time()
-    
-    # No-improvement counter for early stopping
+
     no_improve_counter = 0
-    last_best_objective = best_objective
 
     def eval_cached(s: Schedule) -> Dict:
-        """Evaluate schedule, re-using cached result if available."""
         key = _schedule_key(problem, s)
         if key not in eval_cache:
-            # If cache is full, remove a random entry to make room
             if len(eval_cache) >= max_cache_size:
                 eval_cache.pop(next(iter(eval_cache)))
             eval_cache[key] = evaluate_schedule(problem, s)
         return eval_cache[key]
 
-    # Step 2: Main tabu search loop
     for iteration in range(max_iteration):
-        # Generate neighbors and pick the best (with tabu and aspiration rules)
         candidate_schedule, candidate_objective, candidate_move = local_search_step(
             problem,
             current_schedule,
@@ -81,19 +73,17 @@ def solve_tabu(
             move_types,
             max_neighbors,
         )
-        
-        # If no valid move found, continue with current schedule (exploration)
+
         if candidate_schedule is None or candidate_move is None:
             no_improve_counter += 1
         else:
             current_schedule = candidate_schedule
             current_objective = candidate_objective
 
-            # Check for improvement
             if current_objective < best_objective:
                 best_objective = current_objective
                 best_schedule = copy_schedule(current_schedule)
-                no_improve_counter = 0  # Reset counter on improvement
+                no_improve_counter = 0
             else:
                 no_improve_counter += 1
 
@@ -116,33 +106,27 @@ def solve_tabu(
             }
         )
 
-        # Add tabu (forbid immediate reversal) if we had a valid move
         if candidate_move is not None:
             rev_sig = reverse_move_signature(candidate_move)
             tenure = tabu_tenure + (random.randint(0, tenure_jitter) if tenure_jitter > 0 else 0)
             tabu_until[rev_sig] = iteration + tenure
 
-        # Check no-improvement limit
         if no_improve_limit is not None and no_improve_counter >= no_improve_limit:
             if verbose:
                 print(f"No-improvement limit reached at iteration {iteration}")
             break
-        
-        # Cleanup expired tabu entries (cheap)
-        # Check every 10 iterations to remove expired entries
+
         if iteration % 10 == 0 and tabu_until:
             expired = [m for m, until in tabu_until.items() if until <= iteration]
             for m in expired:
                 tabu_until.pop(m, None)
-        
-        # Check time limit
+
         if max_time is not None and (time.time() - start_time) >= max_time:
             if verbose:
                 print(f"Time limit reached at iteration {iteration}")
             break
 
     if log_file is not None:
-        # Flat CSV that's easy to plot in Excel.
         with open(log_file, "w", newline="") as f:
             writer = csv.DictWriter(
                 f,
@@ -174,7 +158,6 @@ def relocate_task(
     to_qc: int,
     to_pos: Optional[int] = None,
 ) -> Schedule:
-    """Move a task from one QC's list to another QC's list at a given position."""
     new_schedule = copy_schedule(schedule)
     from_list = new_schedule[from_qc]
     to_list = new_schedule[to_qc]
@@ -193,7 +176,6 @@ def swap_tasks(
     qc_b: int,
     idx_b: int,
 ) -> Schedule:
-    """Swap two tasks between two different QCs."""
     new_schedule = copy_schedule(schedule)
     new_schedule[qc_a][idx_a], new_schedule[qc_b][idx_b] = new_schedule[qc_b][idx_b], new_schedule[qc_a][idx_a]
     return new_schedule
@@ -204,13 +186,11 @@ def intra_insert(
     from_idx: int,
     to_idx: int,
 ) -> Schedule:
-    """Remove the task at from_idx and insert it at to_idx within the same QC."""
     if from_idx == to_idx:
         return schedule
     new_schedule = copy_schedule(schedule)
     seq = new_schedule[qc]
     task = seq.pop(from_idx)
-    # after pop, list is shorter; inserting at end is fine
     if to_idx >= len(seq):
         seq.append(task)
     else:
@@ -225,16 +205,13 @@ def move_signature(move: Tuple) -> Tuple:
     return move
 
 def reverse_move_signature(move: Tuple) -> Tuple:
-    """Compute the signature of the reverse action (used to mark reverse moves tabu)."""
     mtype = move[0]
     if mtype == "relocate":
         _, t, from_qc, to_qc = move
         return ("relocate", t, to_qc, from_qc)
     if mtype == "swap":
-        # swap is its own reverse
         return move
     if mtype == "intra_insert":
-        # We store a task-level tabu for intra moves, so reverse is identical.
         return move_signature(move)
     return move
 
@@ -253,7 +230,6 @@ def generate_neighbors(
                 for to_qc in qcs:
                     if to_qc == from_qc:
                         continue
-                    # insertion positions, including front
                     for pos in range(len(schedule[to_qc]) + 1):
                         new_schedule = relocate_task(schedule, t, from_qc, to_qc, to_pos=pos)
                         move = ("relocate", t, from_qc, to_qc)
@@ -268,7 +244,6 @@ def generate_neighbors(
                 for idx_a, ta in enumerate(schedule[qc_a]):
                     for idx_b, tb in enumerate(schedule[qc_b]):
                         new_schedule = swap_tasks(schedule, qc_a, idx_a, qc_b, idx_b)
-                        # canonical signature (to avoid duplicates)
                         move = ("swap", min(ta, tb), min(qc_a, qc_b), max(ta, tb), max(qc_a, qc_b))
                         neighbors.append((new_schedule, move))
                         if max_neighbors is not None and len(neighbors) >= max_neighbors:
@@ -315,7 +290,7 @@ def select_best_neighbor(
 
         obj = float(result["objective"])
         if is_tabu and obj >= best_objective:
-            continue  # tabu and no aspiration
+            continue
 
         if obj < best_obj:
             best_obj = obj

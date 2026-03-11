@@ -1,7 +1,3 @@
-"""
-Seeded instance generator for reproducible benchmarks.
-"""
-
 import random
 from typing import List, Tuple, Dict
 import sys
@@ -12,18 +8,7 @@ from qc_problem import QCProblem
 
 
 class InstanceFactory:
-    """Factory for generating reproducible QCSP instances."""
-    
     def __init__(self, config: Dict):
-        """
-        Args:
-            config: Dictionary with keys:
-                - processing_time_range: (min, max) tuple
-                - travel_per_bay: float
-                - precedence_probability: float
-                - num_bays_mode: "fixed" or "proportional"
-                - fixed_bays: int (if mode is "fixed")
-        """
         self.config = config
         self.instances_generated = []
     
@@ -33,12 +18,6 @@ class InstanceFactory:
         num_qcs: int,
         seed: int
     ) -> Tuple[QCProblem, Dict]:
-        """
-        Generate a single instance with given parameters.
-        
-        Returns:
-            (problem, metadata) tuple
-        """
         # Determine num_bays
         if self.config.get("num_bays_mode") == "proportional":
             num_bays = num_tasks
@@ -77,12 +56,6 @@ class InstanceFactory:
         num_instances_per_config: int,
         seed_base: int = 42
     ) -> List[Tuple[QCProblem, Dict]]:
-        """
-        Generate a full suite of instances.
-        
-        Returns:
-            List of (problem, metadata) tuples
-        """
         instances = []
         instance_id = 0
         

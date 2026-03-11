@@ -243,16 +243,11 @@ def run_time_limit(
 def main() -> None:
     fixed_seeds = list(range(1, 6))
 
-    '''
-    #1. task scaling
     run_task_scaling(
         seeds=fixed_seeds,
         time_limit=1000.0,
         output_csv="task_scaling.csv",
     )
-    '''
-    #2. capacity test
-    '''
     
     run_capacity_test(
         Ks=[2, 3],
@@ -261,13 +256,11 @@ def main() -> None:
         time_limit=600.0,
         output_csv="capacity_test.csv",
     )
-'''
-    # 3. time-limit/anytime curve
-    
+
     run_time_limit(
         K=3,
         T=10,
-        num_bays=11,
+        num_bays=10,
         seeds=fixed_seeds,
         time_limits=[1000, 1500, 2000, 2500],
         output_csv="time_limit.csv",

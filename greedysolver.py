@@ -49,7 +49,6 @@ def _push_past_incompatible(
     incompat_map: Dict[int, Set[int]],
     max_loops: int = 10_000,
 ) -> Tuple[float, float]:
-    """Delay (start, finish) until it doesn't overlap any incompatible task."""
     loops = 0
     while True:
         loops += 1
@@ -57,7 +56,7 @@ def _push_past_incompatible(
             raise RuntimeError("Non-simultaneity push loop did not converge")
 
         conflict_finish = None
-        for other in incompat_map.get(task, ()):  # only check truly incompatible tasks
+        for other in incompat_map.get(task, ()):
             if other not in task_intervals:
                 continue
             other_start, other_finish = task_intervals[other]
@@ -81,69 +80,39 @@ def _earliest_feasible_start(
     task_intervals: Dict[int, Tuple[float, float]],
     incompat_map: Dict[int, Set[int]],
 ) -> Tuple[float, float]:
-    """Earliest start/finish on a QC, respecting Φ and Ψ by inserting waiting."""
     travel = _travel_time(problem, qc, prev_task, task)
     pred_ready = 0.0
-    for p in predecessors.get(task, ()):  # predecessors must already be scheduled
+    for p in predecessors.get(task, ()):
         pred_ready = max(pred_ready, task_finish[p])
 
     start = max(qc_ready + travel, pred_ready)
     duration = problem.duration[task]
     finish = start + duration
 
-    # Insert waiting if needed to avoid any incompatible overlap
     start2, finish2 = _push_past_incompatible(task, start, finish, duration, task_intervals, incompat_map)
     return start2, finish2
 
 def solve_greedy(problem):
 
     start_clock = time.time()
-
-    # -----------------------------
-    # Build data structures
-    # -----------------------------
     location = problem.location
-
-    # Predecessor map for precedence checking
     predecessors = _build_predecessors(problem.tasks, problem.phi)
     incompat_map = _build_incompatibility_map(problem.psi)
     assigned_qc: Dict[int, int] = {}
 
-    # -----------------------------
-    # Priority ordering
-    # -----------------------------
-    def priority_key(t: int):
-        """Default priority: left→right by bay. If present, prefer discharge+deck."""
-        op_rank = 0
-        lvl_rank = 0
-        if hasattr(problem, "operation"):
-            op_rank = 0 if getattr(problem, "operation")[t] == "D" else 1
-        if hasattr(problem, "level"):
-            lvl_rank = 0 if getattr(problem, "level")[t] == "deck" else 1
-        return (location[t], op_rank, lvl_rank)
-
-    unscheduled: List[int] = sorted(problem.tasks, key=priority_key)
+    unscheduled: List[int] = sorted(problem.tasks, key=lambda t: location[t])
     scheduled: Set[int] = set()
 
-    # Track per-task timing as we build (needed for precedence and Ψ-waiting)
     task_finish: Dict[int, float] = {}
     task_intervals: Dict[int, Tuple[float, float]] = {}
 
-    # -----------------------------
-    # QC state tracking
-    # -----------------------------
     schedule = {k: [] for k in problem.qcs}
     qc_time: Dict[int, float] = {k: float(problem.earliest_time[k]) for k in problem.qcs}
     qc_pos: Dict[int, Optional[int]] = {k: None for k in problem.qcs}
 
-    # Track detailed timing: {qc: [(task, start, finish), ...]}
     qc_task_times: Dict[int, List[Tuple[int, float, float]]] = {k: [] for k in problem.qcs}
 
-    # -----------------------------
-    # Main greedy loop
-    # -----------------------------
     while unscheduled:
-        # Find tasks whose predecessors are already scheduled (so we know their finish times)
         available = [t for t in unscheduled if predecessors.get(t, set()) <= scheduled]
 
         if not available:
@@ -151,9 +120,6 @@ def solve_greedy(problem):
                 "Precedence deadlock: no available task but unscheduled tasks remain"
             )
 
-        # One-step look-ahead:
-        # For each available task, compute its best achievable finish over all QCs,
-        # then select the (task, qc) pair that finishes earliest.
         best_task = None
         best_qc = None
         best_start = None
@@ -191,14 +157,12 @@ def solve_greedy(problem):
                     best_task = task
                     best_start = start
 
-        # Check if any QC is feasible
         if best_qc is None or best_task is None or best_start is None:
             raise RuntimeError(
                 "No feasible assignment found for any available task. "
                 "Assignments may violate non-simultaneity or interference constraints."
             )
 
-        # Assign task to best QC
         schedule[best_qc].append(best_task)
         assigned_qc[best_task] = best_qc
         qc_time[best_qc] = best_finish
@@ -209,14 +173,8 @@ def solve_greedy(problem):
         task_finish[best_task] = best_finish
         task_intervals[best_task] = (best_start, best_finish)
 
-        # Update tracking
         unscheduled.remove(best_task)
 
-    # -----------------------------
-    # Calculate objective
-    # -----------------------------
-    # Re-evaluate the completed schedule using the standard evaluation routine
-    # (adds final travel time and uses a consistent timing policy).
     eval_res = evaluate_schedule(problem, schedule)
 
     runtime = time.time() - start_clock
@@ -230,7 +188,7 @@ def solve_greedy(problem):
         "runtime": runtime,
         "status": "FEASIBLE",
         "schedule": schedule,
-        "task_times": eval_res["task_times"]  # Detailed timing info
+        "task_times": eval_res["task_times"]
     }
 
 def evaluate_schedule(problem, schedule):
@@ -239,7 +197,6 @@ def evaluate_schedule(problem, schedule):
     predecessors = _build_predecessors(tasks, problem.phi)
     incompat_map = _build_incompatibility_map(problem.psi)
 
-    # Basic validation: every task appears exactly once
     seen: List[int] = []
     for k in qcs:
         seen.extend(schedule.get(k, []))
@@ -271,7 +228,6 @@ def evaluate_schedule(problem, schedule):
                 continue
             t = schedule[k][idx]
 
-            # Can't schedule until all predecessors have been scheduled (so we know finish time)
             if any(p not in task_finish for p in predecessors.get(t, ())):
                 continue
 

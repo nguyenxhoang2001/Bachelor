@@ -75,6 +75,8 @@ Edit `configs/benchmark.yaml` to customize:
 - **Part A**: task sizes (5-9), QC counts, instances per config
 - **Part B**: task sizes (10-20), QC counts, time checkpoints
 
+For Part B, you can also set `parallel_workers` to run each `(task_size, qc_count)` configuration concurrently while keeping combined output CSV files.
+
 ## Output Files
 
 ### Part A (Optimality Check)

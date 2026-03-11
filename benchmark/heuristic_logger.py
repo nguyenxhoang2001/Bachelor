@@ -16,7 +16,7 @@ from greedysolver import check_interference
 def solve_heuristic_with_tracking(
     problem: QCProblem,
     time_limit: float,
-    max_iterations: int = 100000,
+    max_iterations: int = 200000,
     no_improve_limit: int = None,
     seed: int = 42
 ) -> Tuple[Dict, List[Dict]]:

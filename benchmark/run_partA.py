@@ -1,7 +1,3 @@
-"""
-Part A: Optimality Check Suite (small instances).
-"""
-
 import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
@@ -19,9 +15,6 @@ ensure_pkg_path()
 
 
 def run_part_a(config_path: str, output_dir: str):
-    """
-    Run Part A benchmark: optimality checking on small instances.
-    """
     # Load config
     config = load_yaml(config_path)
     

@@ -1,7 +1,3 @@
-"""
-Command-line interface for benchmark framework.
-"""
-
 import argparse
 import sys
 import os
@@ -79,7 +75,6 @@ Examples:
 
 
 def run_benchmark(args):
-    """Run benchmark suite."""
     from benchmark.run_partA import run_part_a
     from benchmark.run_partB import run_part_b
     

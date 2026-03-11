@@ -11,12 +11,12 @@ instance:
 
 # MILP solver settings
 milp:
-  time_limit: 1000.0  # seconds
+  time_limit: 1800.0  # seconds
   threads: 1
 
 # Heuristic solver settings
 heuristic:
-  time_limit: 1000.0  # seconds (match MILP for fair comparison)
+  time_limit: 1800.0  # seconds (match MILP for fair comparison)
   max_iterations: 200000
   no_improve_limit: 5000  # Stop after 5000 iterations without improvement
   seed: 42
@@ -34,7 +34,8 @@ part_a:
 part_b:
   task_sizes: [20, 25, 30, 35, 40]
   qc_counts: [2, 3]
-  num_instances_per_config: 5
+  parallel_workers: 10  # Runs each (task_size, qc_count) config in parallel
+  num_instances_per_config: 10
   seed_base: 1000
   # Time checkpoints for comparison (seconds)
-  checkpoints: [1, 5, 10, 30, 60, 120, 300, 600, 1000]
+  checkpoints: [1, 5, 10, 30, 60, 120, 300, 600, 1000, 1400, 1800]

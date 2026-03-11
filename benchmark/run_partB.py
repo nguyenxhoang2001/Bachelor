@@ -1,7 +1,3 @@
-"""
-Part B: Primal Bound Race Suite (larger instances with time-series analysis).
-"""
-
 import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
@@ -9,6 +5,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from pathlib import Path
 from typing import Dict, List
 import numpy as np
+from concurrent.futures import ProcessPoolExecutor, as_completed
 
 from benchmark.instance_factory import InstanceFactory
 from benchmark.common import Timer, CSVWriter, format_value, load_yaml, ensure_pkg_path
@@ -18,69 +15,45 @@ from benchmark.heuristic_logger import solve_heuristic_with_tracking
 ensure_pkg_path()
 
 
-def run_part_b(config_path: str, output_dir: str):
-    """
-    Run Part B benchmark: primal bound race on larger instances.
-    """
-    # Load config
-    config = load_yaml(config_path)
-    
-    part_b_config = config["part_b"]
-    instance_config = config["instance"]
-    milp_config = config["milp"]
-    heuristic_config = config["heuristic"]
-    checkpoints = part_b_config.get("checkpoints", [1, 5, 10, 30, 60, 120, 300, 600])
-    
-    print("="*70)
-    print("PART B: PRIMAL BOUND RACE SUITE")
-    print("="*70)
-    
-    # Create instance factory
-    factory = InstanceFactory(instance_config)
-    
-    # Generate instances
-    print(f"\nGenerating instances...")
-    instances = factory.generate_suite(
-        task_sizes=part_b_config["task_sizes"],
-        qc_counts=part_b_config["qc_counts"],
-        num_instances_per_config=part_b_config["num_instances_per_config"],
-        seed_base=part_b_config.get("seed_base", 1000)
-    )
-    print(f"Generated {len(instances)} instances")
-    
-    # Prepare CSV writers
-    output_path = Path(output_dir)
-    
-    # Main results CSV
-    results_fieldnames = [
+def build_part_b_fieldnames(checkpoints: List[float]) -> List[str]:
+    fieldnames = [
         "instance_id", "config_id", "num_tasks", "num_qcs", "num_bays", "seed",
         "milp_status", "milp_final_obj", "milp_best_bound", "milp_gap",
         "milp_runtime", "milp_node_count", "milp_sol_count",
         "heuristic_final_obj", "heuristic_runtime", "heuristic_iterations",
         "heuristic_feasible", "winner", "gap_milp_heur_percent"
     ]
-    
-    # Add checkpoint columns
+
     for cp in checkpoints:
-        results_fieldnames.extend([f"milp_obj_at_{cp}s", f"heur_obj_at_{cp}s"])
-    
-    results_csv = CSVWriter(str(output_path / "partB_runs.csv"), results_fieldnames)
-    
-    # Time series CSV (long format)
-    timeseries_csv = CSVWriter(
-        str(output_path / "partB_timeseries.csv"),
-        fieldnames=["instance_id", "method", "time", "objective", "best_bound", "gap"]
-    )
-    
-    # Run benchmark
-    print(f"\nRunning benchmark...")
-    
-    for i, (problem, metadata) in enumerate(instances):
-        print(f"\n[{i+1}/{len(instances)}] Instance {metadata['instance_id']}: "
-              f"{metadata['num_tasks']} tasks, {metadata['num_qcs']} QCs")
-        
+        fieldnames.extend([f"milp_obj_at_{cp}s", f"heur_obj_at_{cp}s"])
+
+    return fieldnames
+
+
+def run_part_b_single_config(
+    num_tasks: int,
+    num_qcs: int,
+    num_instances_per_config: int,
+    seed_base: int,
+    global_start_instance_id: int,
+    checkpoints: List[float],
+    instance_config: Dict,
+    milp_config: Dict,
+    heuristic_config: Dict,
+) -> Dict:
+    factory = InstanceFactory(instance_config)
+    run_rows = []
+    timeseries_rows = []
+
+    for i in range(num_instances_per_config):
+        instance_id = global_start_instance_id + i
+        seed = seed_base + instance_id
+
+        problem, metadata = factory.generate(num_tasks, num_qcs, seed)
+        metadata["instance_id"] = instance_id
+        metadata["config_id"] = f"T{num_tasks}_K{num_qcs}"
+
         # Run MILP
-        print(f"  Running MILP...")
         timer = Timer().start()
         milp_result, milp_trace = solve_milp_with_tracking(
             problem,
@@ -88,13 +61,8 @@ def run_part_b(config_path: str, output_dir: str):
             threads=milp_config["threads"]
         )
         milp_result["runtime"] = timer.stop()
-        
-        print(f"  MILP: status={milp_result['status']}, "
-              f"obj={milp_result['objective']}, "
-              f"runtime={milp_result['runtime']:.2f}s")
-        
+
         # Run Heuristic
-        print(f"  Running Heuristic...")
         timer = Timer().start()
         heur_result, heur_trace = solve_heuristic_with_tracking(
             problem,
@@ -104,30 +72,22 @@ def run_part_b(config_path: str, output_dir: str):
             seed=heuristic_config.get("seed", 42)
         )
         heur_result["runtime"] = timer.stop()
-        
-        print(f"  Heuristic: obj={heur_result['objective']}, "
-              f"runtime={heur_result['runtime']:.2f}s, "
-              f"feasible={heur_result['is_feasible']}")
-        
-        # Extract objectives at checkpoints
+
         milp_checkpoints = extract_checkpoints(milp_trace, checkpoints, "incumbent")
         heur_checkpoints = extract_checkpoints(heur_trace, checkpoints, "best_objective")
-        
-        # Determine winner
+
         winner = determine_winner(
             milp_result["objective"],
             heur_result["objective"] if heur_result["is_feasible"] else None
         )
-        
-        # Calculate gap
+
         gap_milp_heur = None
-        if (milp_result["objective"] is not None and 
-            heur_result["objective"] is not None and 
+        if (milp_result["objective"] is not None and
+            heur_result["objective"] is not None and
             heur_result["is_feasible"]):
             gap_milp_heur = (heur_result["objective"] - milp_result["objective"]) / \
                            max(abs(heur_result["objective"]), 1e-6) * 100
-        
-        # Build result row
+
         result_row = {
             "instance_id": metadata["instance_id"],
             "config_id": metadata["config_id"],
@@ -149,19 +109,15 @@ def run_part_b(config_path: str, output_dir: str):
             "winner": winner,
             "gap_milp_heur_percent": format_value(gap_milp_heur),
         }
-        
-        # Add checkpoint values
+
         for cp in checkpoints:
             result_row[f"milp_obj_at_{cp}s"] = format_value(milp_checkpoints.get(cp))
             result_row[f"heur_obj_at_{cp}s"] = format_value(heur_checkpoints.get(cp))
-        
-        results_csv.add_row(result_row)
-        
-        # Log time series
-        instance_id = metadata["instance_id"]
-        
+
+        run_rows.append(result_row)
+
         for entry in milp_trace:
-            timeseries_csv.add_row({
+            timeseries_rows.append({
                 "instance_id": instance_id,
                 "method": "MILP",
                 "time": format_value(entry.get("time", 0.0)),
@@ -169,9 +125,9 @@ def run_part_b(config_path: str, output_dir: str):
                 "best_bound": format_value(entry.get("best_bound")),
                 "gap": format_value(entry.get("gap")),
             })
-        
+
         for entry in heur_trace:
-            timeseries_csv.add_row({
+            timeseries_rows.append({
                 "instance_id": instance_id,
                 "method": "HEURISTIC",
                 "time": format_value(entry.get("time", 0.0)),
@@ -179,6 +135,131 @@ def run_part_b(config_path: str, output_dir: str):
                 "best_bound": "N/A",
                 "gap": "N/A",
             })
+
+    return {
+        "config_id": f"T{num_tasks}_K{num_qcs}",
+        "run_rows": run_rows,
+        "timeseries_rows": timeseries_rows,
+    }
+
+
+def run_part_b(config_path: str, output_dir: str):
+    # Load config
+    config = load_yaml(config_path)
+    
+    part_b_config = config["part_b"]
+    instance_config = config["instance"]
+    milp_config = config["milp"]
+    heuristic_config = config["heuristic"]
+    checkpoints = part_b_config.get("checkpoints", [1, 5, 10, 30, 60, 120, 300, 600])
+    parallel_workers = max(1, int(part_b_config.get("parallel_workers", 1)))
+    
+    print("="*70)
+    print("PART B: PRIMAL BOUND RACE SUITE")
+    print("="*70)
+    
+    config_pairs = [
+        (num_tasks, num_qcs)
+        for num_tasks in part_b_config["task_sizes"]
+        for num_qcs in part_b_config["qc_counts"]
+    ]
+    total_instances = len(config_pairs) * part_b_config["num_instances_per_config"]
+
+    print(f"\nPreparing {len(config_pairs)} Part B configs with {total_instances} total instances")
+    print(f"Parallel workers: {parallel_workers}")
+    if parallel_workers > 1 and milp_config.get("threads", 1) > 1:
+        print("Warning: milp.threads > 1 with parallel workers may oversubscribe CPU")
+    
+    # Prepare CSV writers
+    output_path = Path(output_dir)
+    
+    # Main results CSV
+    results_csv = CSVWriter(
+        str(output_path / "partB_runs.csv"),
+        build_part_b_fieldnames(checkpoints)
+    )
+    
+    # Time series CSV (long format)
+    timeseries_csv = CSVWriter(
+        str(output_path / "partB_timeseries.csv"),
+        fieldnames=["instance_id", "method", "time", "objective", "best_bound", "gap"]
+    )
+    
+    print(f"\nRunning benchmark...")
+
+    num_instances_per_config = part_b_config["num_instances_per_config"]
+    seed_base = part_b_config.get("seed_base", 1000)
+
+    if parallel_workers == 1:
+        for cfg_idx, (num_tasks, num_qcs) in enumerate(config_pairs):
+            start_id = cfg_idx * num_instances_per_config
+            print(
+                f"  Running config T{num_tasks}_K{num_qcs} "
+                f"({cfg_idx + 1}/{len(config_pairs)})"
+            )
+            payload = run_part_b_single_config(
+                num_tasks=num_tasks,
+                num_qcs=num_qcs,
+                num_instances_per_config=num_instances_per_config,
+                seed_base=seed_base,
+                global_start_instance_id=start_id,
+                checkpoints=checkpoints,
+                instance_config=instance_config,
+                milp_config=milp_config,
+                heuristic_config=heuristic_config,
+            )
+            payload["run_rows"].sort(key=lambda row: int(row["instance_id"]))
+            payload["timeseries_rows"].sort(
+                key=lambda row: (
+                    int(row["instance_id"]),
+                    row["method"],
+                    float(row["time"]) if row["time"] != "N/A" else 0.0,
+                )
+            )
+            for row in payload["run_rows"]:
+                results_csv.add_row(row)
+            for row in payload["timeseries_rows"]:
+                timeseries_csv.add_row(row)
+    else:
+        with ProcessPoolExecutor(max_workers=parallel_workers) as executor:
+            future_to_cfg = {}
+            for cfg_idx, (num_tasks, num_qcs) in enumerate(config_pairs):
+                start_id = cfg_idx * num_instances_per_config
+                future = executor.submit(
+                    run_part_b_single_config,
+                    num_tasks,
+                    num_qcs,
+                    num_instances_per_config,
+                    seed_base,
+                    start_id,
+                    checkpoints,
+                    instance_config,
+                    milp_config,
+                    heuristic_config,
+                )
+                future_to_cfg[future] = (num_tasks, num_qcs)
+
+            completed = 0
+            for future in as_completed(future_to_cfg):
+                num_tasks, num_qcs = future_to_cfg[future]
+                payload = future.result()
+                payload["run_rows"].sort(key=lambda row: int(row["instance_id"]))
+                payload["timeseries_rows"].sort(
+                    key=lambda row: (
+                        int(row["instance_id"]),
+                        row["method"],
+                        float(row["time"]) if row["time"] != "N/A" else 0.0,
+                    )
+                )
+                for row in payload["run_rows"]:
+                    results_csv.add_row(row)
+                for row in payload["timeseries_rows"]:
+                    timeseries_csv.add_row(row)
+                completed += 1
+                print(
+                    f"  Finished config T{num_tasks}_K{num_qcs} "
+                    f"({completed}/{len(config_pairs)})"
+                )
     
     # Write results
     results_csv.flush()
@@ -197,11 +278,6 @@ def run_part_b(config_path: str, output_dir: str):
 
 
 def extract_checkpoints(trace: List[Dict], checkpoints: List[float], key: str) -> Dict[float, float]:
-    """
-    Extract objective values at specific time checkpoints from trace.
-    
-    Returns dict mapping checkpoint -> objective value
-    """
     checkpoint_values = {}
     
     if not trace:
@@ -228,7 +304,6 @@ def extract_checkpoints(trace: List[Dict], checkpoints: List[float], key: str) -
 
 
 def determine_winner(milp_obj, heur_obj) -> str:
-    """Determine which method achieved better objective."""
     if milp_obj is None and heur_obj is None:
         return "NONE"
     elif milp_obj is None:
@@ -244,7 +319,6 @@ def determine_winner(milp_obj, heur_obj) -> str:
 
 
 def generate_part_b_summary(rows: List[Dict], output_file: str, checkpoints: List[float]):
-    """Generate aggregate summary by (T, K) configuration."""
     from collections import defaultdict
     
     # Group by config_id
@@ -297,5 +371,6 @@ def generate_part_b_summary(rows: List[Dict], output_file: str, checkpoints: Lis
     # Write summary
     if summary_rows:
         writer = CSVWriter(output_file, fieldnames=list(summary_rows[0].keys()))
-        writer.rows = summary_rows
+        for row in summary_rows:
+            writer.add_row(row)
         writer.flush()
